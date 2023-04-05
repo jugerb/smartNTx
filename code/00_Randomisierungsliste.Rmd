@@ -1,0 +1,212 @@
+---
+title: "smartNTx Randomisierungsliste"
+author: "grb"
+date: "2023-04-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(janitor)
+library(openxlsx)
+
+#set.seed(1)
+```
+
+
+## Data prep
+Grunddatensatz von durchzuführenden Randomisierungen bauen
+```{r data}
+# Set up the variables for the randomization
+zentrum <- c(rep("Uebergreifend", 2), rep("Erlangen", 2), rep("Essen", 2), rep("Berlin", 2))
+alter <- c(c("<12J", ">=12-<18J"), rep(c(">=18J-<65J", ">=65J"), 3))
+strat <- paste0('strat_', seq(1,8))
+rand <- paste0('rand_', LETTERS[seq(1,8)])
+
+# Set up the  number of expected observations per stratum
+expected_obs <- c(10, 10, 54, 18, 88, 30, 128, 46)
+
+# Combine the variables into a data frame
+data <- data.frame(zentrum, alter, strat, rand, expected_obs)
+```
+
+
+## Random blocks
+```{r}
+block_lengths <- seq(2, 20, by = 2)
+
+# Create an empty list to store the b values
+b_list <- list()
+
+# Loop through the rows of the data
+for (i in 1:nrow(data)) {
+  # Calculate the initial value of b for this row
+  b <- ifelse(sum(block_lengths < expected_obs[i]) > 1, 
+  sample(block_lengths[block_lengths < expected_obs[i]], size=1), 2)
+  
+  # Continue to add blocks to b until the expected number of observations is reached
+  while(sum(b, na.rm = TRUE) < expected_obs[i]) {
+    # Calculate the size of the next block to add
+    b2_init <- ifelse(expected_obs[i] - sum(b) > 2, 
+                      sample(block_lengths[block_lengths <= expected_obs[i] - sum(b)], 1), 2)
+    # Add the new block to b
+    b <- c(b, b2_init)
+  }
+  
+  # Add five blocks of random lengths between 2 and 8 to b
+  for (j in 1:5) {
+    b2_add <- ifelse(expected_obs[i] > 3, sample(seq(2, 8, by = 2), 1), 2)
+    b <- c(b, b2_add)
+  }
+  
+  # Append the final value of b to the list of b values
+  b_list <- append(b_list, list(b))
+}
+
+data$blocks <- b_list
+data
+```
+
+
+## Add random assignment within blocks
+```{r}
+# expand data frame by number of blocks & add block_id
+long <- data %>% 
+  unnest(cols = c(blocks)) %>% 
+  rename(block_length = blocks) %>% 
+  
+  # add identification of block and block by stratum 
+  mutate(block_id = row_number()) %>%
+  group_by(rand) %>% 
+  mutate(block_id_stratum = row_number()) %>% 
+  ungroup()
+
+
+# generate assignment vector
+i = 1
+loc_list <- list()
+
+for (i in 1:nrow(long)) {
+  loc <- rep(c("IG", "KG"),times = long$block_length[i]/2)
+  loc_list <- append(loc_list, list(loc))
+}
+
+
+# expand data frame & randomize by arranging by random number
+longer <- long %>% 
+  mutate(assignment = loc_list) %>% 
+  unnest(cols = c(assignment)) %>% 
+
+  # add random number & arrange by it
+  mutate(rand_help = runif(length(block_length))) %>% 
+  group_by(block_id) %>% 
+  arrange(block_id, rand_help)
+```
+
+
+## Tests
+```{r}
+# Gleichverteilung von IG & KG prüfen
+check <- longer %>% 
+  group_by(block_id) %>% 
+  mutate(assignment_01 = ifelse(assignment == 'KG', 0, 1),
+         assignment_01_sum = sum(assignment_01)) %>% 
+  ungroup() %>% 
+  mutate(check_length = assignment_01_sum == block_length / 2)
+
+# TRUE wenn, die Anzahl der IG-Zuweisungen der Hälfte des n's pro Block entspricht
+check %>% tabyl(check_length)
+
+# Zuweisung über alle Blöcke
+check %>% tabyl(assignment)
+# Zuweisung in jedem einzelnen Block
+check %>% tabyl(block_id, assignment)
+# Zuweisung in jedem randomisierungsarm
+check %>% tabyl(rand, assignment)
+```
+
+
+
+## Export
+```{r export_prep}
+# volle Liste für IGES 
+list_full <- longer %>% 
+  ungroup() %>%
+  tibble::rowid_to_column("lfdnr") #%>% 
+  
+# List mit reduzierter Info für MIK 
+list_full_mik <- list_full %>% 
+  select(lfdnr, zentrum, alter, rand, group = assignment) %>% 
+  mutate(
+    zentrum = case_when(
+      zentrum == 'Erlangen' ~ 1,
+      zentrum == 'Essen' ~ 2,
+      zentrum == 'Berlin' ~ 3,
+      zentrum == 'Uebergreifend' ~ 4
+    ),
+    alter = case_when(
+      alter == '<12J' ~ 1,
+      alter == '>=12-<18J' ~ 2,
+      alter == '>=18J-<65J' ~ 3,
+      alter == '>=65J' ~ 4,
+    )
+  )
+
+# MIK-Liste nochmals teilen in 25% und Rest
+list_sample_25 <- list_full %>%
+  group_by(rand) %>%
+  mutate(row_number = row_number()) %>% 
+  filter(row_number <= expected_obs * 0.25) %>% 
+  select(lfdnr, zentrum, alter, rand, group = assignment) %>% 
+    mutate(
+    zentrum = case_when(
+      zentrum == 'Erlangen' ~ 1,
+      zentrum == 'Essen' ~ 2,
+      zentrum == 'Berlin' ~ 3,
+      zentrum == 'Uebergreifend' ~ 4
+    ),
+    alter = case_when(
+      alter == '<12J' ~ 1,
+      alter == '>=12-<18J' ~ 2,
+      alter == '>=18J-<65J' ~ 3,
+      alter == '>=65J' ~ 4,
+    )
+  )
+
+list_sample_75 <- list_full %>% 
+  group_by(rand) %>%
+  mutate(row_number = row_number()) %>% 
+  filter(row_number > expected_obs * 0.25) %>% 
+  select(lfdnr, zentrum, alter, rand, group = assignment) %>% 
+    mutate(
+    zentrum = case_when(
+      zentrum == 'Erlangen' ~ 1,
+      zentrum == 'Essen' ~ 2,
+      zentrum == 'Berlin' ~ 3,
+      zentrum == 'Uebergreifend' ~ 4
+    ),
+    alter = case_when(
+      alter == '<12J' ~ 1,
+      alter == '>=12-<18J' ~ 2,
+      alter == '>=18J-<65J' ~ 3,
+      alter == '>=65J' ~ 4,
+    )
+  )
+
+nrow(list_sample_25) + nrow(list_sample_75) == nrow(list_full)
+```
+
+```{r export}
+# write.xlsx(list_full, "O:/U5588/smartNTx/results/00_Randomisierung/Volle_Liste.xlsx")
+# write.xlsx(list_full_mik, "O:/U5588/smartNTx/results/00_Randomisierung/Volle_Liste_MIK.xlsx")
+# write.xlsx(list_sample_25, "O:/U5588/smartNTx/results/00_Randomisierung/Liste_25Proz_MIK.xlsx")
+# write.xlsx(list_sample_75, "O:/U5588/smartNTx/results/00_Randomisierung/Liste_75Proz_MIK.xlsx")
+```
+
+
+
+
+
+
