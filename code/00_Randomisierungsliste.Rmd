@@ -144,7 +144,7 @@ list_full_mik <- list_full %>%
       zentrum == 'Erlangen' ~ 1,
       zentrum == 'Essen' ~ 2,
       zentrum == 'Berlin' ~ 3,
-      zentrum == 'Uebergreifend' ~ 4
+      zentrum == 'Uebergreifend' ~ 9
     ),
     alter = case_when(
       alter == '<12J' ~ 1,
@@ -153,19 +153,22 @@ list_full_mik <- list_full %>%
       alter == '>=65J' ~ 4,
     )
   )
+
 
 # MIK-Liste nochmals teilen in 25% und Rest
 list_sample_25 <- list_full %>%
   group_by(rand) %>%
   mutate(row_number = row_number()) %>% 
-  filter(row_number <= expected_obs * 0.25) %>% 
-  select(lfdnr, zentrum, alter, rand, group = assignment) %>% 
+  #filter(row_number <= expected_obs * 0.25) %>% 
+  filter(ifelse(rand %in% c("rand_A", "rand_B"), row_number <= expected_obs * 0.4, 
+                row_number <= expected_obs * 0.25)) %>% 
+  select(zentrum, alter, rand, group = assignment) %>% 
     mutate(
     zentrum = case_when(
       zentrum == 'Erlangen' ~ 1,
       zentrum == 'Essen' ~ 2,
       zentrum == 'Berlin' ~ 3,
-      zentrum == 'Uebergreifend' ~ 4
+      zentrum == 'Uebergreifend' ~ 9
     ),
     alter = case_when(
       alter == '<12J' ~ 1,
@@ -173,19 +176,23 @@ list_sample_25 <- list_full %>%
       alter == '>=18J-<65J' ~ 3,
       alter == '>=65J' ~ 4,
     )
-  )
+  )  %>% 
+  # laufende Nummer anpassen
+  tibble::rowid_to_column("lfdnr") 
 
 list_sample_75 <- list_full %>% 
   group_by(rand) %>%
   mutate(row_number = row_number()) %>% 
-  filter(row_number > expected_obs * 0.25) %>% 
-  select(lfdnr, zentrum, alter, rand, group = assignment) %>% 
+  #filter(row_number > expected_obs * 0.25) %>% 
+    filter(ifelse(rand %in% c("rand_A", "rand_B"), row_number > expected_obs * 0.4, 
+                row_number > expected_obs * 0.25)) %>% 
+  select(zentrum, alter, rand, group = assignment) %>% 
     mutate(
     zentrum = case_when(
       zentrum == 'Erlangen' ~ 1,
       zentrum == 'Essen' ~ 2,
       zentrum == 'Berlin' ~ 3,
-      zentrum == 'Uebergreifend' ~ 4
+      zentrum == 'Uebergreifend' ~ 9
     ),
     alter = case_when(
       alter == '<12J' ~ 1,
@@ -193,19 +200,31 @@ list_sample_75 <- list_full %>%
       alter == '>=18J-<65J' ~ 3,
       alter == '>=65J' ~ 4,
     )
-  )
+  ) 
+
+list_sample_75 <- list_sample_75 %>%
+  ungroup() %>%
+  # laufende Nummer anpassen
+  mutate(lfdnr = seq(from = nrow(list_sample_25) +1, to = nrow(list_sample_25) + nrow(list_sample_75), by=1)) %>% 
+  select(lfdnr, everything())
+
 
 nrow(list_sample_25) + nrow(list_sample_75) == nrow(list_full)
 ```
 
-```{r export}
+```{r export1}
+# write.xlsx(list_full, "O:/U5588/smartNTx/results/00_Randomisierung/Volle_Liste_Testliste.xlsx")
+# write.xlsx(list_full_mik, "O:/U5588/smartNTx/results/00_Randomisierung/Volle_Liste_MIK_Testliste.xlsx")
+# write.xlsx(list_sample_25, "O:/U5588/smartNTx/results/00_Randomisierung/Liste_25Proz_MIK_Testliste.xlsx")
+# write.xlsx(list_sample_75, "O:/U5588/smartNTx/results/00_Randomisierung/Liste_75Proz_MIK_Testliste.xlsx")
+```
+
+```{r export2}
 # write.xlsx(list_full, "O:/U5588/smartNTx/results/00_Randomisierung/Volle_Liste.xlsx")
 # write.xlsx(list_full_mik, "O:/U5588/smartNTx/results/00_Randomisierung/Volle_Liste_MIK.xlsx")
 # write.xlsx(list_sample_25, "O:/U5588/smartNTx/results/00_Randomisierung/Liste_25Proz_MIK.xlsx")
 # write.xlsx(list_sample_75, "O:/U5588/smartNTx/results/00_Randomisierung/Liste_75Proz_MIK.xlsx")
 ```
-
-
 
 
 
